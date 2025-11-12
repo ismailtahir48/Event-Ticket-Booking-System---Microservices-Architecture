@@ -1,0 +1,265 @@
+version: '3.8'
+
+services:
+  # Infrastructure
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    command: postgres -c max_connections=200
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Services
+  auth:
+    build:
+      context: ./services/auth
+      dockerfile: Dockerfile
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/auth_db
+      JWT_SECRET: ${JWT_SECRET:-your-secret-key-change-in-production}
+      JWT_PUBLIC_KEY: ${JWT_PUBLIC_KEY:-}
+      JWT_PRIVATE_KEY: ${JWT_PRIVATE_KEY:-}
+      PORT: 3001
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "3001:3001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  directory:
+    build:
+      context: ./services/directory
+      dockerfile: Dockerfile
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/directory_db
+      PORT: 3002
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "3002:3002"
+
+  catalog:
+    build:
+      context: ./services/catalog
+      dockerfile: Dockerfile
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/catalog_db
+      PORT: 3003
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "3003:3003"
+
+  seatmap:
+    build:
+      context: ./services/seatmap
+      dockerfile: Dockerfile
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/seatmap_db
+      PORT: 3004
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "3004:3004"
+
+  inventory:
+    build:
+      context: ./services/inventory
+      dockerfile: Dockerfile
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/inventory_db
+      REDIS_URL: redis://redis:6379
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+      PORT: 3005
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    ports:
+      - "3005:3005"
+
+  orders:
+    build:
+      context: ./services/orders
+      dockerfile: Dockerfile
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/orders_db
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+      INVENTORY_SERVICE_URL: http://host.docker.internal:3005
+      CATALOG_SERVICE_URL: http://host.docker.internal:3003
+      SEATMAP_SERVICE_URL: http://host.docker.internal:3004
+      CORS_ORIGIN: http://localhost:3000
+      PORT: 3006
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    ports:
+      - "3006:3006"
+
+  payments:
+    build:
+      context: ./services/payments
+      dockerfile: Dockerfile
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/payments_db
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+      PORT: 3007
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    ports:
+      - "3007:3007"
+
+  waitlist:
+    build:
+      context: ./services/waitlist
+      dockerfile: Dockerfile
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/waitlist_db
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+      PORT: 3008
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    ports:
+      - "3008:3008"
+
+  notifications:
+    build:
+      context: ./services/notifications
+      dockerfile: Dockerfile
+    environment:
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+      PORT: 3009
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    ports:
+      - "3009:3009"
+
+  search:
+    build:
+      context: ./services/search
+      dockerfile: Dockerfile
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/search_db
+      PORT: 3010
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "3010:3010"
+
+  ws:
+    build:
+      context: ./services/ws
+      dockerfile: Dockerfile
+    environment:
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+      PORT: 3011
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    ports:
+      - "3011:3011"
+
+  # Gateway (Next.js)
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      NODE_ENV: development
+      AUTH_SERVICE_URL: http://auth:3001
+      DIRECTORY_SERVICE_URL: http://directory:3002
+      CATALOG_SERVICE_URL: http://catalog:3003
+      SEATMAP_SERVICE_URL: http://seatmap:3004
+      INVENTORY_SERVICE_URL: http://inventory:3005
+      ORDERS_SERVICE_URL: http://orders:3006
+      PAYMENTS_SERVICE_URL: http://payments:3007
+      WAITLIST_SERVICE_URL: http://waitlist:3008
+      NOTIFICATIONS_SERVICE_URL: http://notifications:3009
+      SEARCH_SERVICE_URL: http://search:3010
+      WS_SERVICE_URL: http://ws:3011
+      REDIS_URL: redis://redis:6379
+      JWT_PUBLIC_KEY: ${JWT_PUBLIC_KEY:-}
+    depends_on:
+      - auth
+      - directory
+      - catalog
+      - seatmap
+      - inventory
+      - orders
+      - payments
+      - waitlist
+      - notifications
+      - search
+      - ws
+      - redis
+    ports:
+      - "3000:3000"
+    volumes:
+      - .:/app
+      - /app/node_modules
+      - /app/.next
+
+volumes:
+  postgres_data:
+  redis_data:
+  rabbitmq_data:
+

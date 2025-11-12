@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  postgres-init:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    command: >
+      bash -c "
+      psql -h postgres -U postgres -c 'CREATE DATABASE auth_db;' || true
+      psql -h postgres -U postgres -c 'CREATE DATABASE directory_db;' || true
+      psql -h postgres -U postgres -c 'CREATE DATABASE catalog_db;' || true
+      psql -h postgres -U postgres -c 'CREATE DATABASE seatmap_db;' || true
+      psql -h postgres -U postgres -c 'CREATE DATABASE inventory_db;' || true
+      psql -h postgres -U postgres -c 'CREATE DATABASE orders_db;' || true
+      psql -h postgres -U postgres -c 'CREATE DATABASE payments_db;' || true
+      psql -h postgres -U postgres -c 'CREATE DATABASE waitlist_db;' || true
+      psql -h postgres -U postgres -c 'CREATE DATABASE search_db;' || true
+      "
+    depends_on:
+      - postgres
+    networks:
+      - default
+
